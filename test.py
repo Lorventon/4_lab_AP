@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # Загрузка переменных окружения
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = "7815154623:AAGkH6TTZW0lt4Z2i6dBa9MLD7mneL-urok"
 API_KEY = os.getenv("COINMARKETCAP_API_KEY")
 
 # Инициализация бота и диспетчера
