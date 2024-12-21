@@ -1,4 +1,5 @@
 import os
+import csv
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -8,7 +9,7 @@ from dotenv import load_dotenv
 
 # Загрузка переменных окружения
 load_dotenv()
-BOT_TOKEN = "7815154623:AAGkH6TTZW0lt4Z2i6dBa9MLD7mneL-urok"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_KEY = os.getenv("COINMARKETCAP_API_KEY")
 
 # Инициализация бота и диспетчера
@@ -19,32 +20,32 @@ dp = Dispatcher()
 BASE_URL = "https://pro-api.coinmarketcap.com/v1"
 
 # Функция для получения списка криптовалют с ценами
-def get_crypto_prices(limit=10):
+def get_crypto_data(limit=100):
     url = f"{BASE_URL}/cryptocurrency/listings/latest"
     headers = {"X-CMC_PRO_API_KEY": API_KEY}
     params = {"start": "1", "limit": limit, "convert": "USD"}
     response = requests.get(url, headers=headers, params=params)
     if response.status_code == 200:
-        data = response.json()["data"]
-        prices = [f"{crypto['name']} ({crypto['symbol']}): ${crypto['quote']['USD']['price']:.2f}" for crypto in data]
-        return "\n".join(prices)
+        return response.json()["data"]
     else:
-        return "Ошибка при получении данных. Попробуйте позже."
+        return None
 
-# Функция для получения цены конкретной криптовалюты
-def get_crypto_price_by_name(name):
-    url = f"{BASE_URL}/cryptocurrency/listings/latest"
-    headers = {"X-CMC_PRO_API_KEY": API_KEY}
-    params = {"convert": "USD"}
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code == 200:
-        data = response.json()["data"]
+# Генерация CSV-файла
+def generate_crypto_csv(data, filename="crypto_prices.csv"):
+    with open(filename, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        # Заголовки
+        writer.writerow(["Название", "Тикер", "Цена (USD)", "Объем (24ч)", "Рыночная капитализация"])
+        # Заполнение данными
         for crypto in data:
-            if name.lower() in crypto["name"].lower() or name.lower() == crypto["symbol"].lower():
-                return f"{crypto['name']} ({crypto['symbol']}): ${crypto['quote']['USD']['price']:.2f}"
-        return "Криптовалюта не найдена. Проверьте правильность ввода."
-    else:
-        return "Ошибка при получении данных. Попробуйте позже."
+            writer.writerow([
+                crypto["name"],
+                crypto["symbol"],
+                f"{crypto['quote']['USD']['price']:.2f}",
+                f"{crypto['quote']['USD']['volume_24h']:.2f}",
+                f"{crypto['quote']['USD']['market_cap']:.2f}"
+            ])
+    return filename
 
 # Главная клавиатура
 def main_keyboard():
@@ -64,7 +65,6 @@ def main_keyboard():
     ])
     return keyboard
 
-
 # Обработка команды /start
 @dp.message(Command(commands=["start"]))
 async def start_command(message: types.Message):
@@ -77,30 +77,44 @@ async def start_command(message: types.Message):
         print(f"Ошибка в обработчике /start: {e}")
         await message.answer("Произошла ошибка. Попробуйте позже.")
 
-
-
 # Обработка callback-запросов
 @dp.callback_query()
 async def handle_callback(callback_query: types.CallbackQuery):
     if callback_query.data == "get_prices":
-        await callback_query.message.answer("Получение цен...")
-        prices = get_crypto_prices()
-        await callback_query.message.answer(f"Актуальные цены:\n\n{prices}")
-    elif callback_query.data == "get_crypto_by_name":
-        await callback_query.message.answer("Введите название криптовалюты (например, Bitcoin):")
-    elif callback_query.data == "top_cryptos":
-        await callback_query.message.answer("Получение Топ-10 криптовалют...")
-        top_cryptos = get_crypto_prices(limit=10)
-        await callback_query.message.answer(f"Топ-10 криптовалют:\n\n{top_cryptos}")
-    elif callback_query.data == "about_bot":
-        await callback_query.message.answer("Этот бот позволяет отслеживать цены на криптовалюты в реальном времени. Выберите действие на клавиатуре!")
+        await callback_query.message.answer("Генерация файла с ценами...")
+        data = get_crypto_data(limit=100)
+        if data:
+            filename = generate_crypto_csv(data)
+            try:
+                # Отправляем файл пользователю
+                await callback_query.message.answer_document(
+                    document=types.InputFile(path_or_bytesio=filename),
+                    caption="Вот файл с актуальными ценами на криптовалюты."
+                )
+            except Exception as e:
+                print(f"Ошибка при отправке файла: {e}")
+                await callback_query.message.answer("Произошла ошибка при отправке файла.")
+            finally:
+                # Удаляем файл после отправки
+                if os.path.exists(filename):
+                    os.remove(filename)
+        else:
+            await callback_query.message.answer("Не удалось получить данные. Попробуйте позже.")
 
 # Обработка текстовых сообщений
 @dp.message()
 async def handle_text_message(message: types.Message):
     name = message.text.strip()
-    result = get_crypto_price_by_name(name)
-    await message.answer(result)
+    data = get_crypto_data(limit=100)
+    if data:
+        for crypto in data:
+            if name.lower() in crypto["name"].lower() or name.lower() == crypto["symbol"].lower():
+                result = f"{crypto['name']} ({crypto['symbol']}): ${crypto['quote']['USD']['price']:.2f}"
+                await message.answer(result)
+                return
+        await message.answer("Криптовалюта не найдена. Проверьте правильность ввода.")
+    else:
+        await message.answer("Не удалось получить данные. Попробуйте позже.")
 
 # Запуск бота
 async def main():
@@ -109,5 +123,4 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    
     asyncio.run(main())
